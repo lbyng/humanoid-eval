@@ -138,27 +138,89 @@ def load_converted_data(json_file_path: str) -> dict:
         raise
 
 
-def group_episodes(data: List[dict]) -> Dict[str, List[dict]]:
+def detect_data_format(data: List[dict]) -> str:
+    """Detect whether data uses single camera or multi-camera format"""
+    if not data:
+        raise ValueError("Empty data")
+    
+    first_item = data[0]
+    if 'image' in first_item:
+        return 'single'
+    elif 'images' in first_item:
+        return 'multi'
+    else:
+        raise ValueError("Unknown data format: missing 'image' or 'images' field")
+
+
+def group_episodes(data: List[dict], data_format: str) -> Dict[str, List[dict]]:
     """Group data by episode ID"""
     episodes = {}
+    
     for item in data:
-        # Extract episode ID from image path (e.g., "0001_rgb/0001/0000.png" -> "0001")
-        image_path = item['image']
-        episode_id = image_path.split('_')[0]
+        # Extract episode ID based on data format
+        if data_format == 'single':
+            # Single camera: "0001_rgb/0001/0000.png" -> "0001"
+            image_path = item['image']
+            episode_id = image_path.split('_')[0]
+        else:  # multi
+            # Multi camera: ["wrist/0001/0000.png", "head/0001/0000.png"] -> "0001"
+            # Extract from first available image path
+            if item['images']:
+                first_image = item['images'][0]
+                # Extract episode ID from path like "wrist/0001/0000.png"
+                parts = first_image.split('/')
+                if len(parts) >= 2:
+                    episode_id = parts[1]  # Get the episode ID (e.g., "0001")
+                else:
+                    logging.warning(f"Unexpected image path format: {first_image}")
+                    continue
+            else:
+                logging.warning("Empty images list in item")
+                continue
         
         if episode_id not in episodes:
             episodes[episode_id] = []
         episodes[episode_id].append(item)
     
-    # Sort items within each episode by image filename
+    # Sort items within each episode by frame number
     for episode_id in episodes:
-        episodes[episode_id].sort(key=lambda x: x['image'].split('/')[-1])
+        if data_format == 'single':
+            episodes[episode_id].sort(key=lambda x: x['image'].split('/')[-1])
+        else:  # multi
+            # Sort by frame number from first image path
+            episodes[episode_id].sort(key=lambda x: x['images'][0].split('/')[-1] if x['images'] else '9999')
     
     return episodes
 
 
+def display_episode_info(episode_data: List[dict], data_format: str, episode_id: str):
+    """Display information about an episode"""
+    print(f"\n=== Episode {episode_id} Information ===")
+    print(f"Task: {episode_data[0]['task']}")
+    print(f"Total frames: {len(episode_data)}")
+    
+    if data_format == 'multi':
+        # Check camera configuration
+        if episode_data[0]['images']:
+            num_cameras = len(episode_data[0]['images'])
+            print(f"Cameras: {num_cameras}")
+            
+            # Identify camera types from paths
+            camera_types = []
+            for img_path in episode_data[0]['images']:
+                camera_type = img_path.split('/')[0]  # Extract camera type from path
+                camera_types.append(camera_type)
+            print(f"Camera types: {', '.join(camera_types)}")
+    else:
+        print(f"Camera: single (head)")
+    
+    print("===========================\n")
+
+
 def replay_episode(
     episode_data: List[dict],
+    episode_id: str,
+    data_format: str,
     robot_config: dict,
     frequency: float = 50.0
 ):
@@ -168,16 +230,13 @@ def replay_episode(
     controller = ConvertedDataReplayController(robot_config, frequency)
     
     # Display episode information
-    print(f"\n=== Episode Information ===")
-    print(f"Task: {episode_data[0]['task']}")
-    print(f"Total frames: {len(episode_data)}")
-    print(f"Frequency: {frequency} Hz")
-    print("===========================\n")
+    display_episode_info(episode_data, data_format, episode_id)
+    print(f"Replay frequency: {frequency} Hz")
     
     # Set initial pose
     controller.set_initial_pose()
     
-    print("Starting replay...")
+    print("\nStarting replay...")
     print("Press Ctrl+C to stop replay\n")
     
     try:
@@ -190,7 +249,13 @@ def replay_episode(
                 print(f"Skipping frame {i} (zero actions)")
                 continue
             
-            print(f"Executing frame {i}/{len(episode_data)-1}", end='\r')
+            # Display progress with camera info
+            if data_format == 'multi' and item['images']:
+                camera_info = f" (cameras: {len(item['images'])})"
+            else:
+                camera_info = ""
+            
+            print(f"Executing frame {i}/{len(episode_data)-1}{camera_info}", end='\r')
             
             # Execute action
             controller.execute_action(raw_action)
@@ -212,7 +277,7 @@ def main():
     parser.add_argument("json_file", type=str, help="Path to the converted dataset JSON file")
     parser.add_argument("--hand_type", type=str, default="dex3", choices=["dex3", "gripper"], 
                        help="Type of hand controller (default: dex3)")
-    parser.add_argument("--frequency", type=float, default=30.0, 
+    parser.add_argument("--frequency", type=float, default=15.0, 
                        help="Replay frequency in Hz (default: 30.0)")
     parser.add_argument("--arm_type", type=str, default="g1", 
                        help="Type of arm controller (default: g1)")
@@ -232,14 +297,31 @@ def main():
     print(f"Loading converted data from: {args.json_file}")
     data = load_converted_data(args.json_file)
     
+    if not data:
+        print("No data found in the JSON file!")
+        return
+    
+    # Detect data format
+    data_format = detect_data_format(data)
+    print(f"Detected data format: {data_format}-camera")
+    
     # Group data by episodes
-    episodes = group_episodes(data)
+    episodes = group_episodes(data, data_format)
     episode_ids = sorted(episodes.keys())
     
     print(f"\nFound {len(episodes)} episodes:")
     for i, episode_id in enumerate(episode_ids):
         episode = episodes[episode_id]
-        print(f"  {i+1}. Episode {episode_id} - {len(episode)} frames - Task: {episode[0]['task']}")
+        task_name = episode[0]['task']
+        
+        # Get camera info for display
+        if data_format == 'multi' and episode[0]['images']:
+            camera_count = len(episode[0]['images'])
+            camera_info = f" ({camera_count} cameras)"
+        else:
+            camera_info = " (1 camera)"
+        
+        print(f"  {i+1}. Episode {episode_id} - {len(episode)} frames - Task: {task_name}{camera_info}")
     
     while True:
         # Let user select episode
@@ -259,6 +341,8 @@ def main():
                 # Replay the episode
                 replay_episode(
                     episode_data=selected_episode,
+                    episode_id=selected_episode_id,
+                    data_format=data_format,
                     robot_config=robot_config,
                     frequency=args.frequency
                 )

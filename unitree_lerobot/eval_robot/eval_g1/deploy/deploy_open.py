@@ -269,7 +269,7 @@ def run_offline_control(
     server_url: str,
     task_instruction: str,
     image_folder: str,
-    frequency: float = 50.0,
+    frequency: float = 15.0,
     max_steps: int = 1000,
     display_status: bool = True,
     chunk_size: int = 1,

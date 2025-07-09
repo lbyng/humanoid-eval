@@ -8,49 +8,80 @@ from typing import Dict, List, Optional, Tuple
 from multiprocessing import Array, Lock, shared_memory
 import json_numpy
 json_numpy.patch()
+import cv2
 
 from unitree_lerobot.eval_robot.eval_g1.robot_control.robot_arm import G1_29_ArmController
 from unitree_lerobot.eval_robot.eval_g1.robot_control.robot_hand_unitree import Dex3_1_Controller
 from unitree_lerobot.eval_robot.eval_g1.image_server.image_client import ImageClient
 from lerobot.common.utils.utils import init_logging
 
-import deploy_config as config
+import deploy_multi_config as config
 
 class CameraReceiver:
-    """Camera interface for G1 head camera"""
+    """Camera interface for G1 head and wrist cameras"""
     def __init__(self, camera_config: Dict = None):
         # Camera config
         self.camera_config = camera_config
         self.frame_count = 0
         self.receiving = False
         
-        # Image shape
-        self.img_shape = (self.camera_config['head_camera_image_shape'][0], 
-                         self.camera_config['head_camera_image_shape'][1], 3)
+        # Head camera shape
+        self.head_img_shape = (self.camera_config['head_camera_image_shape'][0], 
+                               self.camera_config['head_camera_image_shape'][1], 3)
+        
+        # Wrist camera shape (if configured)
+        self.has_wrist = 'wrist_camera_type' in self.camera_config and self.camera_config['wrist_camera_type'] is not None
+        if self.has_wrist:
+            # For single wrist camera
+            self.wrist_img_shape = (self.camera_config['wrist_camera_image_shape'][0],
+                                   self.camera_config['wrist_camera_image_shape'][1], 3)
         
         # Initialize shared memory
-        self.img_shm = None
-        self.img_array = None
+        self.head_img_shm = None
+        self.head_img_array = None
+        self.wrist_img_shm = None
+        self.wrist_img_array = None
         self.img_client = None
         self.image_receive_thread = None
         
-        print(f"[INFO] Camera receiver initialized - Shape: {self.img_shape}")
+        print(f"[INFO] Camera receiver initialized")
+        print(f"  - Head camera shape: {self.head_img_shape}")
+        if self.has_wrist:
+            print(f"  - Wrist camera shape: {self.wrist_img_shape}")
         
     def start(self):
         """Start camera receiver"""
         try:
-            # Create shared memory
-            self.img_shm = shared_memory.SharedMemory(
+            # Create shared memory for head camera
+            self.head_img_shm = shared_memory.SharedMemory(
                 create=True, 
-                size=np.prod(self.img_shape) * np.uint8().itemsize
+                size=np.prod(self.head_img_shape) * np.uint8().itemsize
             )
-            self.img_array = np.ndarray(self.img_shape, dtype=np.uint8, buffer=self.img_shm.buf)
+            self.head_img_array = np.ndarray(self.head_img_shape, dtype=np.uint8, 
+                                           buffer=self.head_img_shm.buf)
             
-            # Initialize image client
-            self.img_client = ImageClient(
-                tv_img_shape=self.img_shape, 
-                tv_img_shm_name=self.img_shm.name
-            )
+            # Create shared memory for wrist camera if needed
+            if self.has_wrist:
+                self.wrist_img_shm = shared_memory.SharedMemory(
+                    create=True,
+                    size=np.prod(self.wrist_img_shape) * np.uint8().itemsize
+                )
+                self.wrist_img_array = np.ndarray(self.wrist_img_shape, dtype=np.uint8,
+                                                buffer=self.wrist_img_shm.buf)
+            
+            # Initialize image client with both cameras
+            if self.has_wrist:
+                self.img_client = ImageClient(
+                    tv_img_shape=self.head_img_shape, 
+                    tv_img_shm_name=self.head_img_shm.name,
+                    wrist_img_shape=self.wrist_img_shape,
+                    wrist_img_shm_name=self.wrist_img_shm.name
+                )
+            else:
+                self.img_client = ImageClient(
+                    tv_img_shape=self.head_img_shape, 
+                    tv_img_shm_name=self.head_img_shm.name
+                )
             
             # Start image receive thread
             self.image_receive_thread = threading.Thread(
@@ -67,11 +98,16 @@ class CameraReceiver:
             print(f"[ERROR] Failed to start camera: {e}")
             self.receiving = False
             
-    def get_frame(self):
-        """Get current camera frame"""
-        if self.receiving and self.img_array is not None:
-            self.frame_count += 1
-            return self.img_array.copy()
+    def get_head_frame(self):
+        """Get current head camera frame"""
+        if self.receiving and self.head_img_array is not None:
+            return self.head_img_array.copy()
+        return None
+    
+    def get_wrist_frame(self):
+        """Get current wrist camera frame"""
+        if self.receiving and self.has_wrist and self.wrist_img_array is not None:
+            return self.wrist_img_array.copy()
         return None
     
     def stop(self):
@@ -80,9 +116,13 @@ class CameraReceiver:
         self.receiving = False
         
         # Clean up shared memory
-        if self.img_shm is not None:
-            self.img_shm.close()
-            self.img_shm.unlink()
+        if self.head_img_shm is not None:
+            self.head_img_shm.close()
+            self.head_img_shm.unlink()
+            
+        if self.wrist_img_shm is not None:
+            self.wrist_img_shm.close()
+            self.wrist_img_shm.unlink()
             
         print(f"[INFO] Camera stopped. Total frames: {self.frame_count}")
 
@@ -143,8 +183,24 @@ class G1DeployController:
         print("[INFO] Setting robot to initial pose...")
         
         # Set arms to zero position
-        self.current_left_arm = np.zeros(7)
-        self.current_right_arm = np.zeros(7)
+        self.current_left_arm = [
+                        -0.767316936358975,
+                        0.381656231332008,
+                        0.22744710566856868,
+                        1.2959350318824419,
+                        -0.11364747177705897,
+                        -0.6550891788667533,
+                        -0.3894735819921834
+                    ]
+        self.current_right_arm = [
+                        -0.6584296427664901,
+                        -0.36506894444659865,
+                        -0.16207865261058524,
+                        1.2746278127700772,
+                        -0.00974682451402132,
+                        -0.8306653215166561,
+                        0.155791561329466
+                    ]
         dual_arm_pose = np.concatenate([self.current_left_arm, self.current_right_arm])
         
         # Set arm pose
@@ -233,13 +289,14 @@ class G1DeployController:
         print("[INFO] Robot controller cleaned up")
 
 
-def send_request(image_array: np.ndarray, instruction: str, server_url: str) -> np.ndarray:
+def send_request(images: List[np.ndarray], instruction: str, server_url: str) -> np.ndarray:
     """
-    Send image and instruction to inference server using json_numpy
+    Send images list to inference server using json_numpy
+    images: list of numpy arrays in order [wrist, head] or [head] if no wrist
     Returns action chunk as numpy array
     """
     payload = {
-        "image": image_array,
+        "image": images,  # List of numpy arrays
         "instruction": instruction
     }
     
@@ -309,7 +366,7 @@ def run_closed_loop_control(
     # Wait for first frame
     print("[INFO] Waiting for camera...")
     wait_start = time.time()
-    while camera_receiver.get_frame() is None:
+    while camera_receiver.get_head_frame() is None:
         if time.time() - wait_start > camera_timeout:
             print(f"[ERROR] Camera timeout ({camera_timeout}s)")
             camera_receiver.stop()
@@ -329,29 +386,50 @@ def run_closed_loop_control(
         while step < max_steps:
             loop_start = time.time()
             
-            # Get camera frame
-            current_image = camera_receiver.get_frame()
-            if current_image is None:
-                print(f"[WARN] No camera frame at step {step}")
+            # Get camera frames
+            head_image = camera_receiver.get_head_frame()
+            if head_image is None:
+                print(f"[WARN] No head camera frame at step {step}")
                 continue
             
-            import cv2
-            current_image = cv2.cvtColor(current_image, cv2.COLOR_BGR2RGB)
+            # Convert head image color
+            head_image = cv2.cvtColor(head_image, cv2.COLOR_BGR2RGB)
+            
+            # Build images list: [wrist, head] to match dataset order
+            images_list = []
+            
+            # Get wrist image if available
+            if camera_receiver.has_wrist:
+                wrist_image = camera_receiver.get_wrist_frame()
+                if wrist_image is not None:
+                    wrist_image = cv2.cvtColor(wrist_image, cv2.COLOR_BGR2RGB)
+                    images_list = [wrist_image, head_image]  # [wrist, head] order
+                else:
+                    print(f"[WARN] No wrist camera frame at step {step}, using head only")
+                    images_list = [head_image]  # Head only
+            else:
+                images_list = [head_image]  # Head only
+            
+            # Increment frame count
+            camera_receiver.frame_count += 1
             
             # Get action chunk from model
             try:
                 inference_start = time.time()
-                action_chunk = send_request(current_image, task_instruction, server_url)
+                action_chunk = send_request(images_list, task_instruction, server_url)
                 inference_time = time.time() - inference_start
                 total_inference_count += 1
-            
-                # # 只保留前4个动作
-                # original_chunk_size = len(action_chunk)
-                # action_chunk = action_chunk[:4]
-                    
+                
                 if display_status:
                     print(f"\n[Inference {total_inference_count}] Time: {inference_time:.3f}s")
                     print(f"Received action chunk with {len(action_chunk)} actions")
+                    print(f"  - Images sent: {len(images_list)} ({'wrist+head' if len(images_list) == 2 else 'head only'})")
+                    for i, img in enumerate(images_list):
+                        if len(images_list) == 2:
+                            img_type = "wrist" if i == 0 else "head"
+                        else:
+                            img_type = "head"
+                        print(f"  - {img_type} image shape: {img.shape}")
                 
                 # Execute each action in the chunk
                 for chunk_idx, action in enumerate(action_chunk):
@@ -417,14 +495,23 @@ def main():
     # Initialize logging
     init_logging()
     
-    print("[INFO] G1 Robot Deployment with Action Chunking")
+    print("[INFO] G1 Robot Deployment with Head and Wrist Cameras")
     print("="*60)
-    print(f"Configuration loaded from: deploy_config.py")
+    print(f"Configuration loaded from: deploy_multi_config.py")
     print(f"  - Server URL: {config.SERVER_URL}")
     print(f"  - Task: {config.TASK_INSTRUCTION}")
     print(f"  - Control frequency: {config.CONTROL_FREQUENCY} Hz")
     print(f"  - Max steps: {config.MAX_STEPS}")
-    print(f"  - Camera FPS: {config.CAMERA_CONFIG['fps']}")
+    print(f"  - Head camera FPS: {config.CAMERA_CONFIG['fps']}")
+    
+    # Check if wrist camera is configured
+    if 'wrist_camera_type' in config.CAMERA_CONFIG:
+        print(f"  - Wrist camera: Enabled")
+        print(f"  - Wrist camera shape: {config.CAMERA_CONFIG['wrist_camera_image_shape']}")
+        print(f"  - Image order: [wrist, head]")
+    else:
+        print(f"  - Wrist camera: Disabled")
+        print(f"  - Image order: [head]")
     
     # Get chunk size from config if available
     chunk_size = getattr(config, 'CHUNK_SIZE', 1)

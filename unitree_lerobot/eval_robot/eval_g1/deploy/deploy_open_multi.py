@@ -8,83 +8,117 @@ from typing import Dict, List, Optional, Tuple
 from multiprocessing import Array, Lock, shared_memory
 import json_numpy
 json_numpy.patch()
+import cv2
+import os
 
 from unitree_lerobot.eval_robot.eval_g1.robot_control.robot_arm import G1_29_ArmController
 from unitree_lerobot.eval_robot.eval_g1.robot_control.robot_hand_unitree import Dex3_1_Controller
-from unitree_lerobot.eval_robot.eval_g1.image_server.image_client import ImageClient
 from lerobot.common.utils.utils import init_logging
 
-import deploy_config as config
+import deploy_open_multi_config as config
 
-class CameraReceiver:
-    """Camera interface for G1 head camera"""
-    def __init__(self, camera_config: Dict = None):
-        # Camera config
-        self.camera_config = camera_config
+
+class MultiCameraFolderReader:
+    """Read images from multiple camera folders"""
+    def __init__(self, head_folder: str, wrist_folder: Optional[str] = None):
+        self.head_folder = Path(head_folder)
+        self.wrist_folder = Path(wrist_folder) if wrist_folder else None
         self.frame_count = 0
-        self.receiving = False
+        self.current_index = 0
         
-        # Image shape
-        self.img_shape = (self.camera_config['head_camera_image_shape'][0], 
-                         self.camera_config['head_camera_image_shape'][1], 3)
+        # Store image files for each camera
+        self.camera_files = {}
+        self.camera_types = []
+        self.total_images = 0
         
-        # Initialize shared memory
-        self.img_shm = None
-        self.img_array = None
-        self.img_client = None
-        self.image_receive_thread = None
-        
-        print(f"[INFO] Camera receiver initialized - Shape: {self.img_shape}")
+        # Initialize head camera folder
+        if self.head_folder.exists():
+            # Get all image files sorted by name
+            head_files = sorted([
+                f for f in self.head_folder.glob("*.png")
+                if f.stem.isdigit()
+            ], key=lambda x: int(x.stem))
+            
+            if not head_files:
+                head_files = sorted(self.head_folder.glob("*.jpg"))
+            
+            self.camera_files['head'] = head_files
+            self.camera_types.append('head')
+            self.total_images = len(head_files)
+            print(f"[INFO] Head camera: {len(head_files)} images found in {self.head_folder}")
+        else:
+            print(f"[ERROR] Head camera folder not found: {self.head_folder}")
+            
+        # Initialize wrist camera folder if provided
+        if self.wrist_folder and self.wrist_folder.exists():
+            wrist_files = sorted([
+                f for f in self.wrist_folder.glob("*.png")
+                if f.stem.isdigit()
+            ], key=lambda x: int(x.stem))
+            
+            if not wrist_files:
+                wrist_files = sorted(self.wrist_folder.glob("*.jpg"))
+            
+            self.camera_files['wrist'] = wrist_files
+            self.camera_types.append('wrist')
+            
+            # Verify same number of images
+            if len(wrist_files) != self.total_images:
+                print(f"[WARN] Wrist camera has {len(wrist_files)} images, head has {self.total_images}")
+                self.total_images = min(len(wrist_files), self.total_images)
+            
+            print(f"[INFO] Wrist camera: {len(wrist_files)} images found in {self.wrist_folder}")
+        elif self.wrist_folder:
+            print(f"[WARN] Wrist camera folder not found: {self.wrist_folder}")
+            
+        print(f"[INFO] Multi-camera folder reader initialized")
+        print(f"  - Cameras: {', '.join(self.camera_types)}")
+        print(f"  - Total synchronized frames: {self.total_images}")
         
     def start(self):
-        """Start camera receiver"""
-        try:
-            # Create shared memory
-            self.img_shm = shared_memory.SharedMemory(
-                create=True, 
-                size=np.prod(self.img_shape) * np.uint8().itemsize
-            )
-            self.img_array = np.ndarray(self.img_shape, dtype=np.uint8, buffer=self.img_shm.buf)
-            
-            # Initialize image client
-            self.img_client = ImageClient(
-                tv_img_shape=self.img_shape, 
-                tv_img_shm_name=self.img_shm.name
-            )
-            
-            # Start image receive thread
-            self.image_receive_thread = threading.Thread(
-                target=self.img_client.receive_process, 
-                daemon=True
-            )
-            self.image_receive_thread.daemon = True
-            self.image_receive_thread.start()
-            
-            self.receiving = True
-            print("[INFO] Camera started successfully")
-            
-        except Exception as e:
-            print(f"[ERROR] Failed to start camera: {e}")
-            self.receiving = False
-            
-    def get_frame(self):
-        """Get current camera frame"""
-        if self.receiving and self.img_array is not None:
-            self.frame_count += 1
-            return self.img_array.copy()
-        return None
-    
-    def stop(self):
-        """Stop camera receiver"""
-        print("[INFO] Stopping camera...")
-        self.receiving = False
+        """Compatibility method - does nothing for folder reader"""
+        if self.total_images == 0:
+            print("[ERROR] No images found in any camera folder!")
+            return
+        print("[INFO] Multi-camera folder reader ready")
         
-        # Clean up shared memory
-        if self.img_shm is not None:
-            self.img_shm.close()
-            self.img_shm.unlink()
+    def get_frames(self) -> Dict[str, np.ndarray]:
+        """Get next frame from each camera"""
+        if self.current_index >= self.total_images:
+            print(f"[WARN] Reached end of images (index {self.current_index} >= {self.total_images})")
+            return None
             
-        print(f"[INFO] Camera stopped. Total frames: {self.frame_count}")
+        frames = {}
+        
+        for camera_type in self.camera_types:
+            if self.current_index < len(self.camera_files[camera_type]):
+                image_path = self.camera_files[camera_type][self.current_index]
+                
+                # Read image
+                image = cv2.imread(str(image_path))
+                if image is None:
+                    print(f"[ERROR] Failed to read {camera_type} image: {image_path}")
+                    continue
+                    
+                # Convert BGR to RGB
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                frames[camera_type] = image
+            else:
+                print(f"[WARN] No more {camera_type} images at index {self.current_index}")
+        
+        self.frame_count += 1
+        self.current_index += 1
+        
+        return frames if frames else None
+    
+    def reset(self):
+        """Reset to first image"""
+        self.current_index = 0
+        print("[INFO] Reset to first image")
+        
+    def stop(self):
+        """Compatibility method - does nothing for folder reader"""
+        print(f"[INFO] Multi-camera folder reader stopped. Total frames read: {self.frame_count}")
 
 
 class G1DeployController:
@@ -233,13 +267,14 @@ class G1DeployController:
         print("[INFO] Robot controller cleaned up")
 
 
-def send_request(image_array: np.ndarray, instruction: str, server_url: str) -> np.ndarray:
+def send_request(images: List[np.ndarray], instruction: str, server_url: str, timeout: float = 5.0) -> np.ndarray:
     """
-    Send image and instruction to inference server using json_numpy
+    Send images list to inference server using json_numpy
+    images: list of numpy arrays in order [wrist, head] or [head] if no wrist
     Returns action chunk as numpy array
     """
     payload = {
-        "image": image_array,
+        "image": images,  # List of numpy arrays
         "instruction": instruction
     }
     
@@ -264,38 +299,48 @@ def send_request(image_array: np.ndarray, instruction: str, server_url: str) -> 
         
         return action_chunk
         
+    except requests.exceptions.Timeout:
+        raise Exception("Request timeout")
     except requests.exceptions.ConnectionError:
         raise Exception("Failed to connect to server")
 
 
-def run_closed_loop_control(
+def run_offline_control(
     server_url: str,
     task_instruction: str,
+    head_folder: str,
+    wrist_folder: Optional[str] = None,
     frequency: float = 50.0,
     max_steps: int = 1000,
     display_status: bool = True,
-    camera_config: Dict = None,
-    chunk_size: int = 1
+    chunk_size: int = 1,
+    display_images: bool = False
 ):
-    """Main control loop for deployment with action chunking"""
+    """Main control loop for offline deployment with saved images"""
     
     # Config
-    camera_timeout = getattr(config, 'CAMERA_TIMEOUT', 10)
     step_timeout = getattr(config, 'STEP_TIMEOUT', 5.0)
     print_freq_every = getattr(config, 'PRINT_FREQUENCY_EVERY_N_STEPS', 10)
     wait_for_gripper = getattr(config, 'WAIT_FOR_GRIPPER', True)
     
-    print("[INFO] Starting G1 closed-loop control with action chunking")
+    print("[INFO] Starting G1 offline control with saved images")
     print(f"  - Server: {server_url}")
     print(f"  - Task: {task_instruction}")
+    print(f"  - Head folder: {head_folder}")
+    if wrist_folder:
+        print(f"  - Wrist folder: {wrist_folder}")
     print(f"  - Frequency: {frequency} Hz")
     print(f"  - Max steps: {max_steps}")
     print(f"  - Chunk size: {chunk_size}")
     print("="*60)
     
-    # Initialize camera
-    camera_receiver = CameraReceiver(camera_config)
-    camera_receiver.start()
+    # Initialize image reader
+    image_reader = MultiCameraFolderReader(head_folder, wrist_folder)
+    image_reader.start()
+    
+    if image_reader.total_images == 0:
+        print("[ERROR] No images found in folders")
+        return
     
     # Initialize robot
     robot_controller = G1DeployController(frequency=frequency)
@@ -303,54 +348,64 @@ def run_closed_loop_control(
     
     if not robot_controller.initialized:
         print("[ERROR] Failed to initialize robot controller")
-        camera_receiver.stop()
         return
-    
-    # Wait for first frame
-    print("[INFO] Waiting for camera...")
-    wait_start = time.time()
-    while camera_receiver.get_frame() is None:
-        if time.time() - wait_start > camera_timeout:
-            print(f"[ERROR] Camera timeout ({camera_timeout}s)")
-            camera_receiver.stop()
-            robot_controller.cleanup()
-            return
-        time.sleep(0.1)
-    print("[INFO] Camera ready!")
     
     # Main control loop
     print(f"\n[INFO] Starting control loop...")
     print("Press Ctrl+C to stop\n")
     
+    if display_images:
+        # Create windows for each camera
+        for camera_type in image_reader.camera_types:
+            cv2.namedWindow(f"{camera_type} Camera", cv2.WINDOW_NORMAL)
+    
     step = 0
     total_inference_count = 0
     
     try:
-        while step < max_steps:
+        while step < max_steps and image_reader.current_index < image_reader.total_images:
             loop_start = time.time()
             
-            # Get camera frame
-            current_image = camera_receiver.get_frame()
-            if current_image is None:
-                print(f"[WARN] No camera frame at step {step}")
+            # Get frames from all cameras
+            frames = image_reader.get_frames()
+            if frames is None:
+                print(f"[INFO] No more images available")
+                break
+            
+            # Build image list in correct order [wrist, head]
+            images_list = []
+            if 'wrist' in frames:
+                images_list.append(frames['wrist'])
+            if 'head' in frames:
+                if 'wrist' not in frames:
+                    # Only head camera
+                    images_list.append(frames['head'])
+                else:
+                    # Both cameras, head comes second
+                    images_list.append(frames['head'])
+            
+            if not images_list:
+                print(f"[WARN] No valid images at step {step}")
                 continue
             
-            import cv2
-            current_image = cv2.cvtColor(current_image, cv2.COLOR_BGR2RGB)
+            # Display images if requested
+            if display_images:
+                for camera_type, image in frames.items():
+                    cv2.imshow(f"{camera_type} Camera", cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+                cv2.waitKey(1)
             
             # Get action chunk from model
             try:
                 inference_start = time.time()
-                action_chunk = send_request(current_image, task_instruction, server_url)
+                action_chunk = send_request(images_list, task_instruction, server_url, timeout=step_timeout)
                 inference_time = time.time() - inference_start
                 total_inference_count += 1
-            
-                # # 只保留前4个动作
-                # original_chunk_size = len(action_chunk)
-                # action_chunk = action_chunk[:4]
-                    
+                
                 if display_status:
-                    print(f"\n[Inference {total_inference_count}] Time: {inference_time:.3f}s")
+                    cameras_used = list(frames.keys())
+                    print(f"\n[Inference {total_inference_count}] Frame: {image_reader.current_index-1:04d}")
+                    print(f"Cameras: {', '.join(cameras_used)} ({'wrist+head' if len(cameras_used) == 2 else 'head only'})")
+                    print(f"Inference time: {inference_time:.3f}s")
                     print(f"Received action chunk with {len(action_chunk)} actions")
                 
                 # Execute each action in the chunk
@@ -404,31 +459,62 @@ def run_closed_loop_control(
     finally:
         print("\n[INFO] Cleaning up...")
         robot_controller.cleanup()
-        camera_receiver.stop()
+        image_reader.stop()
+        if display_images:
+            cv2.destroyAllWindows()
     
     print("\n" + "="*60)
     print("[INFO] Control finished")
     print(f"[INFO] Total steps: {step}")
     print(f"[INFO] Total inferences: {total_inference_count}")
-    print(f"[INFO] Camera frames: {camera_receiver.frame_count}")
+    print(f"[INFO] Images processed: {image_reader.frame_count}/{image_reader.total_images}")
 
 
 def main():
     # Initialize logging
     init_logging()
     
-    print("[INFO] G1 Robot Deployment with Action Chunking")
+    print("[INFO] G1 Robot Offline Deployment (Multi-Camera)")
     print("="*60)
     print(f"Configuration loaded from: deploy_config.py")
     print(f"  - Server URL: {config.SERVER_URL}")
     print(f"  - Task: {config.TASK_INSTRUCTION}")
     print(f"  - Control frequency: {config.CONTROL_FREQUENCY} Hz")
     print(f"  - Max steps: {config.MAX_STEPS}")
-    print(f"  - Camera FPS: {config.CAMERA_CONFIG['fps']}")
     
     # Get chunk size from config if available
     chunk_size = getattr(config, 'CHUNK_SIZE', 1)
     print(f"  - Chunk size: {chunk_size}")
+    
+    # Get head folder path
+    head_folder = getattr(config, 'HEAD_FOLDER', None)
+    if head_folder is None:
+        head_folder = input("\nEnter path to head camera folder: ").strip()
+    else:
+        print(f"  - Head folder: {head_folder}")
+    
+    # Check if head folder exists
+    if not os.path.exists(head_folder):
+        print(f"[ERROR] Head folder does not exist: {head_folder}")
+        return
+    
+    # Get wrist folder path (optional)
+    wrist_folder = getattr(config, 'WRIST_FOLDER', None)
+    if wrist_folder == "":
+        wrist_folder = None
+    elif wrist_folder is None:
+        wrist_input = input("\nEnter path to wrist camera folder (or press Enter to skip): ").strip()
+        wrist_folder = wrist_input if wrist_input else None
+    
+    if wrist_folder:
+        print(f"  - Wrist folder: {wrist_folder}")
+        if not os.path.exists(wrist_folder):
+            print(f"[WARN] Wrist folder does not exist: {wrist_folder}")
+            wrist_folder = None
+    
+    # Display images option
+    display_images = getattr(config, 'DISPLAY_IMAGES', False)
+    print(f"  - Display images: {display_images}")
     print("="*60)
     
     # Ask for user confirmation
@@ -448,16 +534,19 @@ def main():
         print("Invalid input. Exiting.")
         return
     
-    # Run control loop
-    run_closed_loop_control(
+    # Run offline control loop
+    run_offline_control(
         server_url=config.SERVER_URL,
         task_instruction=config.TASK_INSTRUCTION,
+        head_folder=head_folder,
+        wrist_folder=wrist_folder,
         frequency=config.CONTROL_FREQUENCY,
         max_steps=config.MAX_STEPS,
         display_status=config.DISPLAY_STATUS,
-        camera_config=config.CAMERA_CONFIG,
-        chunk_size=chunk_size
+        chunk_size=chunk_size,
+        display_images=display_images
     )
+
 
 if __name__ == "__main__":
     main()

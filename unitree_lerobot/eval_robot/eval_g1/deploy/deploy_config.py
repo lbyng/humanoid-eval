@@ -1,8 +1,8 @@
 # Model inference server
-SERVER_URL = "https://95ea22471a00.ngrok-free.app/act"
+SERVER_URL = "https://4bf1065c74d9.ngrok-free.app/act"
 
 # Task instruction
-TASK_INSTRUCTION = "trash bussing"
+TASK_INSTRUCTION = "marker pushing"
 
 # Control parameters
 CONTROL_FREQUENCY = 10.0
