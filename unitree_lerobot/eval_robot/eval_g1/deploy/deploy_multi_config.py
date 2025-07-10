@@ -1,6 +1,6 @@
 # Server configuration
-SERVER_URL = "https://93257ed8660f.ngrok-free.app/act"
-TASK_INSTRUCTION = "lift tray"
+SERVER_URL = "https://ca179e8e1acc.ngrok-free.app/act"
+TASK_INSTRUCTION = "close plate"
 
 # Control parameters
 CONTROL_FREQUENCY = 10.0  # Hz

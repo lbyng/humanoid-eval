@@ -29,7 +29,7 @@ class CameraReceiver:
         self.head_img_shape = (self.camera_config['head_camera_image_shape'][0], 
                                self.camera_config['head_camera_image_shape'][1], 3)
         
-        # Wrist camera shape (if configured)
+        # Wrist camera shape
         self.has_wrist = 'wrist_camera_type' in self.camera_config and self.camera_config['wrist_camera_type'] is not None
         if self.has_wrist:
             # For single wrist camera
@@ -60,7 +60,7 @@ class CameraReceiver:
             self.head_img_array = np.ndarray(self.head_img_shape, dtype=np.uint8, 
                                            buffer=self.head_img_shm.buf)
             
-            # Create shared memory for wrist camera if needed
+            # Create shared memory for wrist camera
             if self.has_wrist:
                 self.wrist_img_shm = shared_memory.SharedMemory(
                     create=True,
@@ -201,7 +201,6 @@ class G1DeployController:
         
     def execute_action(self, action: List[float], wait_for_gripper: bool = True):
         """
-        Execute 16-dimensional action from model
         action[0:7] - left arm joint deltas
         action[7:14] - right arm joint deltas  
         action[14] - left hand state (0=open, 1=closed)
@@ -275,9 +274,7 @@ class G1DeployController:
 
 def send_request(images: List[np.ndarray], instruction: str, server_url: str) -> np.ndarray:
     """
-    Send images list to inference server using json_numpy
-    images: list of numpy arrays in order [wrist, head] or [head] if no wrist
-    Returns action chunk as numpy array
+    Send images list to inference server
     """
     payload = {
         "image": images,  # List of numpy arrays
@@ -295,9 +292,8 @@ def send_request(images: List[np.ndarray], instruction: str, server_url: str) ->
         result = response.json()
         action_chunk = np.array(result)
         
-        # Validate action chunk shape
+        # If single action, reshape to (1, 16)
         if action_chunk.ndim == 1:
-            # Single action, reshape to (1, 16)
             action_chunk = action_chunk.reshape(1, -1)
         
         if action_chunk.shape[-1] != 16:
@@ -318,7 +314,7 @@ def run_closed_loop_control(
     camera_config: Dict = None,
     chunk_size: int = 1
 ):
-    """Main control loop for deployment with action chunking"""
+    """Main control loop for deployment"""
     
     # Config
     camera_timeout = getattr(config, 'CAMERA_TIMEOUT', 10)
@@ -376,10 +372,10 @@ def run_closed_loop_control(
                 print(f"[WARN] No head camera frame at step {step}")
                 continue
             
-            # Convert head image color
+            # BRG -> RBG
             head_image = cv2.cvtColor(head_image, cv2.COLOR_BGR2RGB)
             
-            # Build images list: [wrist, head] to match dataset order
+            # Build images list: [fix, head]
             images_list = []
             
             # Get wrist image if available
@@ -387,7 +383,7 @@ def run_closed_loop_control(
                 wrist_image = camera_receiver.get_wrist_frame()
                 if wrist_image is not None:
                     wrist_image = cv2.cvtColor(wrist_image, cv2.COLOR_BGR2RGB)
-                    images_list = [wrist_image, head_image]  # [wrist, head] order
+                    images_list = [wrist_image, head_image]
                 else:
                     print(f"[WARN] No wrist camera frame at step {step}, using head only")
                     images_list = [head_image]  # Head only
@@ -497,12 +493,12 @@ def main():
         print(f"  - Wrist camera: Disabled")
         print(f"  - Image order: [head]")
     
-    # Get chunk size from config if available
+    # Get chunk size from config
     chunk_size = getattr(config, 'CHUNK_SIZE', 1)
     print(f"  - Chunk size: {chunk_size}")
     print("="*60)
     
-    # Ask for user confirmation
+    # Confirmation
     user_input = input("\nPress 's' to start deployment, 'r' to reset robot, or 'q' to quit: ")
     
     if user_input.lower() == 'q':
