@@ -183,24 +183,8 @@ class G1DeployController:
         print("[INFO] Setting robot to initial pose...")
         
         # Set arms to zero position
-        self.current_left_arm = [
-                        -0.767316936358975,
-                        0.381656231332008,
-                        0.22744710566856868,
-                        1.2959350318824419,
-                        -0.11364747177705897,
-                        -0.6550891788667533,
-                        -0.3894735819921834
-                    ]
-        self.current_right_arm = [
-                        -0.6584296427664901,
-                        -0.36506894444659865,
-                        -0.16207865261058524,
-                        1.2746278127700772,
-                        -0.00974682451402132,
-                        -0.8306653215166561,
-                        0.155791561329466
-                    ]
+        self.current_left_arm = np.zeros(7)
+        self.current_right_arm = np.zeros(7)
         dual_arm_pose = np.concatenate([self.current_left_arm, self.current_right_arm])
         
         # Set arm pose
