@@ -157,20 +157,15 @@ def group_episodes(data: List[dict], data_format: str) -> Dict[str, List[dict]]:
     episodes = {}
     
     for item in data:
-        # Extract episode ID based on data format
         if data_format == 'single':
-            # Single camera: "0001_rgb/0001/0000.png" -> "0001"
             image_path = item['image']
             episode_id = image_path.split('_')[0]
         else:  # multi
-            # Multi camera: ["wrist/0001/0000.png", "head/0001/0000.png"] -> "0001"
-            # Extract from first available image path
             if item['images']:
                 first_image = item['images'][0]
-                # Extract episode ID from path like "wrist/0001/0000.png"
                 parts = first_image.split('/')
                 if len(parts) >= 2:
-                    episode_id = parts[1]  # Get the episode ID (e.g., "0001")
+                    episode_id = parts[1]
                 else:
                     logging.warning(f"Unexpected image path format: {first_image}")
                     continue
