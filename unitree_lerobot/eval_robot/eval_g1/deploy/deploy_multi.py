@@ -13,7 +13,7 @@ import cv2
 from unitree_lerobot.eval_robot.eval_g1.robot_control.robot_arm import G1_29_ArmController
 from unitree_lerobot.eval_robot.eval_g1.robot_control.robot_hand_unitree import Dex3_1_Controller
 from unitree_lerobot.eval_robot.eval_g1.image_server.image_client import ImageClient
-from lerobot.common.utils.utils import init_logging
+from lerobot.common.utils.utils import init_logging # type: ignore
 
 import deploy_multi_config as config
 
