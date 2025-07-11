@@ -247,7 +247,7 @@ class G1DeployController:
             self.left_hand_array[:] = left_hand_pose
             self.right_hand_array[:] = right_hand_pose
             
-            # Check if gripper state changed and wait if needed
+            # Check if gripper state changed
             if wait_for_gripper:
                 gripper_changed = (self.prev_left_hand_state != left_hand_state or 
                                  self.prev_right_hand_state != right_hand_state)

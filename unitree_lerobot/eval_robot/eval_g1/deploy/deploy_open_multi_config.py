@@ -2,7 +2,7 @@
 
 # Server configuration
 SERVER_URL = "https://ca179e8e1acc.ngrok-free.app/act"
-TASK_INSTRUCTION = "clean plate"
+TASK_INSTRUCTION = "close box"
 START_INDEX = 30
 
 # Control parameters
@@ -20,25 +20,24 @@ WAIT_FOR_GRIPPER = True
 DISPLAY_IMAGES = False
 
 # Camera folder configuration
-HEAD_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/clean_plate/head/0005"
-WRIST_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/clean_plate/fix/0005"
+HEAD_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/close_box/head/0008"
+WRIST_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/close_box/fix/0008"
 
 LEFT_ARM = [
-            -0.7814386519874144,
-            0.26664621835562186,
-            -0.07327171430414153,
-            1.2399993242358711,
-            0.29410360768561616,
-            -0.5346406380603802,
-            0.05183655009729242
-        ]
-
+                        -0.9479023870683034,
+                        0.33169206269747153,
+                        0.21263253235147372,
+                        1.3366596586716044,
+                        -0.003964927671710803,
+                        -0.3762602732885445,
+                        -0.233602907724086
+                    ]
 RIGHT_AMR = [
-            -0.7188564620423048,
-            -0.22946260222567763,
-            -0.26948017917637934,
-            1.199751473983983,
-            0.13455140941625637,
-            -0.5741487435915177,
-            0.19707843870303807
-        ]
+                        -0.9110879153188621,
+                        -0.2433729344705992,
+                        -0.3355893694050562,
+                        1.3085806679473562,
+                        0.21248294275070462,
+                        -0.5420431844370477,
+                        0.6783106657060436
+                    ]

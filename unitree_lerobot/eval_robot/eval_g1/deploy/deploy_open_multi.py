@@ -261,7 +261,7 @@ class G1DeployController:
             self.left_hand_array[:] = left_hand_pose
             self.right_hand_array[:] = right_hand_pose
             
-            # Check if gripper state changed and wait if needed
+            # Check if gripper state changed
             if wait_for_gripper:
                 gripper_changed = (self.prev_left_hand_state != left_hand_state or 
                                  self.prev_right_hand_state != right_hand_state)
@@ -430,17 +430,14 @@ def run_offline_control(
                 image_reader.skip_frames(1)  # Skip this frame
                 continue
             
-            # Display images if requested
             if display_images:
                 for camera_type, image in frames.items():
-                    # Add text overlay showing current index
                     display_img = image.copy()
                     cv2.putText(display_img, f"Index: {current_image_index}", 
                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
                     cv2.imshow(f"{camera_type} Camera", cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR))
                 cv2.waitKey(1)
             
-            # Get action chunk from model
             try:
                 inference_start = time.time()
                 action_chunk = send_request(images_list, task_instruction, server_url, timeout=step_timeout)
@@ -496,8 +493,6 @@ def run_offline_control(
                     
                     step += 1
                 
-                # Skip frames based on chunk size
-                # We already read one frame, so skip chunk_length frames to get to the next one
                 image_reader.skip_frames(chunk_length)
                 print(f"[INFO] Skipped to image index: {image_reader.current_index}")
                 
@@ -539,11 +534,9 @@ def main():
     print(f"  - Control frequency: {config.CONTROL_FREQUENCY} Hz")
     print(f"  - Max steps: {config.MAX_STEPS}")
     
-    # Get chunk size from config if available
     chunk_size = getattr(config, 'CHUNK_SIZE', 1)
     print(f"  - Chunk size: {chunk_size}")
     
-    # Get start index from config if available
     start_index = getattr(config, 'START_INDEX', 0)
     
     # Get head folder path
@@ -558,7 +551,7 @@ def main():
         print(f"[ERROR] Head folder does not exist: {head_folder}")
         return
     
-    # Get wrist folder path (optional)
+    # Get wrist folder path
     wrist_folder = getattr(config, 'WRIST_FOLDER', None)
     if wrist_folder == "":
         wrist_folder = None
