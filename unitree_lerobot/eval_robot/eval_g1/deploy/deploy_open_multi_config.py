@@ -1,7 +1,7 @@
 # Server configuration
-SERVER_URL = "https://ca179e8e1acc.ngrok-free.app/act"
-TASK_INSTRUCTION = "close box"
-START_INDEX = 30
+SERVER_URL = "https://ca179e8e1acc.ngrok-free.app/act" # TODO
+TASK_INSTRUCTION = "close box" # TODO
+START_INDEX = 30 # TODO
 
 # Control parameters
 CONTROL_FREQUENCY = 15.0  # Hz
@@ -18,9 +18,10 @@ WAIT_FOR_GRIPPER = True
 DISPLAY_IMAGES = False
 
 # Camera folder configuration
-HEAD_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/close_box/head/0002"
-WRIST_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/close_box/fix/0002"
+HEAD_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/close_box/head/0002" # TODO
+WRIST_FOLDER = "/home/sean/humanoid-teleop/data/converted_data/close_box/fix/0002" # TODO
 
+# TODO
 LEFT_ARM = [
                         -0.7310029517388426,
                         0.282537611070542,
@@ -30,6 +31,8 @@ LEFT_ARM = [
                         -0.5808883844587759,
                         -0.448898914469791
                     ]
+
+# TODO
 RIGHT_AMR = [
                         -0.9151563465485182,
                         -0.2626081436879704,
