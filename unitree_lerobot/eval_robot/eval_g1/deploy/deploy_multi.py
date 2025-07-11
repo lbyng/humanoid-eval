@@ -32,7 +32,6 @@ class CameraReceiver:
         # Wrist camera shape
         self.has_wrist = 'wrist_camera_type' in self.camera_config and self.camera_config['wrist_camera_type'] is not None
         if self.has_wrist:
-            # For single wrist camera
             self.wrist_img_shape = (self.camera_config['wrist_camera_image_shape'][0],
                                    self.camera_config['wrist_camera_image_shape'][1], 3)
         
@@ -203,10 +202,8 @@ class G1DeployController:
                     ]
         dual_arm_pose = np.concatenate([self.current_left_arm, self.current_right_arm])
         
-        # Set arm pose
         self.arm_ctrl.ctrl_dual_arm(dual_arm_pose, np.zeros(14))
         
-        # Set hands to open position
         self.left_hand_array[:] = np.zeros(7)
         self.right_hand_array[:] = np.zeros(7)
         self.prev_left_hand_state = 0
@@ -394,7 +391,6 @@ def run_closed_loop_control(
             # Build images list: [fix, head]
             images_list = []
             
-            # Get wrist image if available
             if camera_receiver.has_wrist:
                 wrist_image = camera_receiver.get_wrist_frame()
                 if wrist_image is not None:
@@ -402,14 +398,12 @@ def run_closed_loop_control(
                     images_list = [wrist_image, head_image]
                 else:
                     print(f"[WARN] No wrist camera frame at step {step}, using head only")
-                    images_list = [head_image]  # Head only
+                    images_list = [head_image]
             else:
-                images_list = [head_image]  # Head only
+                images_list = [head_image]
             
-            # Increment frame count
             camera_receiver.frame_count += 1
             
-            # Get action chunk from model
             try:
                 inference_start = time.time()
                 action_chunk = send_request(images_list, task_instruction, server_url)
@@ -427,7 +421,6 @@ def run_closed_loop_control(
                             img_type = "head"
                         print(f"  - {img_type} image shape: {img.shape}")
                 
-                # Execute each action in the chunk
                 for chunk_idx, action in enumerate(action_chunk):
                     if step >= max_steps:
                         break
@@ -488,7 +481,6 @@ def run_closed_loop_control(
 
 
 def main():
-    # Initialize logging
     init_logging()
     
     print("[INFO] G1 Robot Deployment with Head and Wrist Cameras")
@@ -500,7 +492,6 @@ def main():
     print(f"  - Max steps: {config.MAX_STEPS}")
     print(f"  - Head camera FPS: {config.CAMERA_CONFIG['fps']}")
     
-    # Check if wrist camera is configured
     if 'wrist_camera_type' in config.CAMERA_CONFIG:
         print(f"  - Wrist camera: Enabled")
         print(f"  - Wrist camera shape: {config.CAMERA_CONFIG['wrist_camera_image_shape']}")
@@ -509,12 +500,10 @@ def main():
         print(f"  - Wrist camera: Disabled")
         print(f"  - Image order: [head]")
     
-    # Get chunk size from config
     chunk_size = getattr(config, 'CHUNK_SIZE', 1)
     print(f"  - Chunk size: {chunk_size}")
     print("="*60)
     
-    # Confirmation
     user_input = input("\nPress 's' to start deployment, 'r' to reset robot, or 'q' to quit: ")
     
     if user_input.lower() == 'q':
@@ -531,7 +520,6 @@ def main():
         print("Invalid input. Exiting.")
         return
     
-    # Run control loop
     run_closed_loop_control(
         server_url=config.SERVER_URL,
         task_instruction=config.TASK_INSTRUCTION,

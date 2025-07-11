@@ -25,7 +25,7 @@ class MultiCameraFolderReader:
         self.wrist_folder = Path(wrist_folder) if wrist_folder else None
         self.frame_count = 0
         self.start_index = start_index
-        self.current_index = start_index  # Start from specified index
+        self.current_index = start_index
         
         # Store image files for each camera
         self.camera_files = {}
@@ -34,7 +34,6 @@ class MultiCameraFolderReader:
         
         # Initialize head camera folder
         if self.head_folder.exists():
-            # Get all image files sorted by name
             head_files = sorted([
                 f for f in self.head_folder.glob("*.png")
                 if f.stem.isdigit()
@@ -50,7 +49,7 @@ class MultiCameraFolderReader:
         else:
             print(f"[ERROR] Head camera folder not found: {self.head_folder}")
             
-        # Initialize wrist camera folder if provided
+        # Initialize wrist camera folder
         if self.wrist_folder and self.wrist_folder.exists():
             wrist_files = sorted([
                 f for f in self.wrist_folder.glob("*.png")
@@ -63,7 +62,6 @@ class MultiCameraFolderReader:
             self.camera_files['wrist'] = wrist_files
             self.camera_types.append('wrist')
             
-            # Verify same number of images
             if len(wrist_files) != self.total_images:
                 print(f"[WARN] Wrist camera has {len(wrist_files)} images, head has {self.total_images}")
                 self.total_images = min(len(wrist_files), self.total_images)
@@ -72,7 +70,6 @@ class MultiCameraFolderReader:
         elif self.wrist_folder:
             print(f"[WARN] Wrist camera folder not found: {self.wrist_folder}")
         
-        # Validate start index
         if self.start_index >= self.total_images:
             print(f"[WARN] Start index {self.start_index} >= total images {self.total_images}, setting to 0")
             self.start_index = 0
@@ -115,14 +112,12 @@ class MultiCameraFolderReader:
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 frames[camera_type] = image
                 
-                # Log the actual file being read (useful for debugging)
-                if self.frame_count < 3 or self.frame_count % 10 == 0:  # Log first few and every 10th
+                if self.frame_count < 3 or self.frame_count % 10 == 0:
                     print(f"[DEBUG] Reading {camera_type}: {image_path.name}")
             else:
                 print(f"[WARN] No more {camera_type} images at index {self.current_index}")
         
         self.frame_count += 1
-        # Don't increment current_index here - it will be done by skip_frames()
         
         return frames if frames else None
     
@@ -163,15 +158,12 @@ class G1DeployController:
         self.arm_ctrl = None
         self.hand_ctrl = None
         
-        # Track current arm positions
         self.current_left_arm = np.zeros(7)
         self.current_right_arm = np.zeros(7)
         
-        # Track current hand states
         self.prev_left_hand_state = 0
         self.prev_right_hand_state = 0
         
-        # Hand arrays for Dex3
         self.left_hand_array = Array('d', 7, lock=True)
         self.right_hand_array = Array('d', 7, lock=True)
         self.dual_hand_data_lock = Lock()
@@ -183,11 +175,9 @@ class G1DeployController:
     def init(self):
         """Initialize robot controllers"""
         try:
-            # Initialize arm controller
             print("[INFO] Initializing G1-29 arm controller...")
             self.arm_ctrl = G1_29_ArmController()
             
-            # Initialize Dex3 hand controller
             print("[INFO] Initializing Dex3 hand controller...")
             self.hand_ctrl = Dex3_1_Controller(
                 self.left_hand_array, 
@@ -197,7 +187,6 @@ class G1DeployController:
                 self.dual_hand_action_array
             )
             
-            # Set initial pose
             self.set_initial_pose()
             
             self.initialized = True
@@ -211,15 +200,12 @@ class G1DeployController:
         """Set robot to initial pose (zero position)"""
         print("[INFO] Setting robot to initial pose...")
         
-        # Set arms to zero position
         self.current_left_arm = config.LEFT_ARM
         self.current_right_arm = config.RIGHT_AMR
         dual_arm_pose = np.concatenate([self.current_left_arm, self.current_right_arm])
         
-        # Set arm pose
         self.arm_ctrl.ctrl_dual_arm(dual_arm_pose, np.zeros(14))
         
-        # Set hands to open position
         self.left_hand_array[:] = np.zeros(7)
         self.right_hand_array[:] = np.zeros(7)
         self.prev_left_hand_state = 0
@@ -230,7 +216,6 @@ class G1DeployController:
         
     def execute_action(self, action: List[float], wait_for_gripper: bool = True):
         """
-        Execute 16-dimensional action from model
         action[0:7] - left arm joint deltas
         action[7:14] - right arm joint deltas  
         action[14] - left hand state (0=open, 1=closed)
@@ -241,27 +226,22 @@ class G1DeployController:
             return
             
         try:
-            # Parse action
             left_arm_delta = np.array(action[0:7])
             right_arm_delta = np.array(action[7:14])
-            left_hand_state = action[14]  # 0=open, 1=closed
-            right_hand_state = action[15]  # 0=open, 1=closed
+            left_hand_state = action[14]
+            right_hand_state = action[15]
             
-            # Apply delta to current positions
             self.current_left_arm += left_arm_delta
             self.current_right_arm += right_arm_delta
             
-            # Execute arm action
             dual_arm_action = np.concatenate([self.current_left_arm, self.current_right_arm])
             self.arm_ctrl.ctrl_dual_arm(dual_arm_action, np.zeros(14))
             
-            # Execute hand action
             left_hand_pose = self._get_dex3_hand_pose(left_hand_state, 'left')
             right_hand_pose = self._get_dex3_hand_pose(right_hand_state, 'right')
             self.left_hand_array[:] = left_hand_pose
             self.right_hand_array[:] = right_hand_pose
             
-            # Check if gripper state changed
             if wait_for_gripper:
                 gripper_changed = (self.prev_left_hand_state != left_hand_state or 
                                  self.prev_right_hand_state != right_hand_state)
@@ -324,9 +304,7 @@ def send_request(images: List[np.ndarray], instruction: str, server_url: str, ti
         result = response.json()
         action_chunk = np.array(result)
         
-        # Validate action chunk shape
         if action_chunk.ndim == 1:
-            # Single action, reshape to (1, 16)
             action_chunk = action_chunk.reshape(1, -1)
         
         if action_chunk.shape[-1] != 16:
@@ -371,7 +349,6 @@ def run_offline_control(
     print(f"  - Start index: {start_index}")
     print("="*60)
     
-    # Initialize image reader with start index
     image_reader = MultiCameraFolderReader(head_folder, wrist_folder, start_index)
     image_reader.start()
     
@@ -379,7 +356,6 @@ def run_offline_control(
         print("[ERROR] No images found in folders")
         return
     
-    # Initialize robot
     robot_controller = G1DeployController(frequency=frequency)
     robot_controller.init()
     
@@ -393,7 +369,6 @@ def run_offline_control(
     print("Press Ctrl+C to stop\n")
     
     if display_images:
-        # Create windows for each camera
         for camera_type in image_reader.camera_types:
             cv2.namedWindow(f"{camera_type} Camera", cv2.WINDOW_NORMAL)
     
@@ -413,7 +388,6 @@ def run_offline_control(
             # Store current index before processing
             current_image_index = image_reader.current_index
             
-            # Build image list in correct order [wrist, head]
             images_list = []
             if 'wrist' in frames:
                 images_list.append(frames['wrist'])
