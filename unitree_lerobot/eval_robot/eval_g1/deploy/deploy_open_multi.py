@@ -20,11 +20,12 @@ import deploy_open_multi_config as config
 
 class MultiCameraFolderReader:
     """Read images from multiple camera folders"""
-    def __init__(self, head_folder: str, wrist_folder: Optional[str] = None):
+    def __init__(self, head_folder: str, wrist_folder: Optional[str] = None, start_index: int = 0):
         self.head_folder = Path(head_folder)
         self.wrist_folder = Path(wrist_folder) if wrist_folder else None
         self.frame_count = 0
-        self.current_index = 0
+        self.start_index = start_index
+        self.current_index = start_index  # Start from specified index
         
         # Store image files for each camera
         self.camera_files = {}
@@ -70,10 +71,20 @@ class MultiCameraFolderReader:
             print(f"[INFO] Wrist camera: {len(wrist_files)} images found in {self.wrist_folder}")
         elif self.wrist_folder:
             print(f"[WARN] Wrist camera folder not found: {self.wrist_folder}")
+        
+        # Validate start index
+        if self.start_index >= self.total_images:
+            print(f"[WARN] Start index {self.start_index} >= total images {self.total_images}, setting to 0")
+            self.start_index = 0
+            self.current_index = 0
+        elif self.start_index > 0:
+            print(f"[INFO] Starting from image index {self.start_index}")
             
         print(f"[INFO] Multi-camera folder reader initialized")
         print(f"  - Cameras: {', '.join(self.camera_types)}")
         print(f"  - Total synchronized frames: {self.total_images}")
+        print(f"  - Starting from index: {self.start_index}")
+        print(f"  - Remaining frames: {self.total_images - self.start_index}")
         
     def start(self):
         """Compatibility method - does nothing for folder reader"""
@@ -103,18 +114,42 @@ class MultiCameraFolderReader:
                 # Convert BGR to RGB
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 frames[camera_type] = image
+                
+                # Log the actual file being read (useful for debugging)
+                if self.frame_count < 3 or self.frame_count % 10 == 0:  # Log first few and every 10th
+                    print(f"[DEBUG] Reading {camera_type}: {image_path.name}")
             else:
                 print(f"[WARN] No more {camera_type} images at index {self.current_index}")
         
         self.frame_count += 1
-        self.current_index += 1
+        # Don't increment current_index here - it will be done by skip_frames()
         
         return frames if frames else None
     
+    def skip_frames(self, num_frames: int):
+        """Skip forward by num_frames"""
+        new_index = self.current_index + num_frames
+        if new_index <= self.total_images:
+            self.current_index = new_index
+            print(f"[INFO] Skipped {num_frames} frames. New index: {self.current_index}")
+        else:
+            print(f"[WARN] Cannot skip {num_frames} frames. Would exceed total images.")
+            self.current_index = self.total_images
+    
     def reset(self):
-        """Reset to first image"""
-        self.current_index = 0
-        print("[INFO] Reset to first image")
+        """Reset to start index"""
+        self.current_index = self.start_index
+        self.frame_count = 0
+        print(f"[INFO] Reset to start index {self.start_index}")
+        
+    def skip_to_index(self, index: int):
+        """Skip to a specific index"""
+        if 0 <= index < self.total_images:
+            self.current_index = index
+            self.frame_count = index - self.start_index
+            print(f"[INFO] Skipped to index {index}")
+        else:
+            print(f"[WARN] Invalid index {index}, must be between 0 and {self.total_images-1}")
         
     def stop(self):
         """Compatibility method - does nothing for folder reader"""
@@ -177,8 +212,8 @@ class G1DeployController:
         print("[INFO] Setting robot to initial pose...")
         
         # Set arms to zero position
-        self.current_left_arm = np.zeros(7)
-        self.current_right_arm = np.zeros(7)
+        self.current_left_arm = config.LEFT_ARM
+        self.current_right_arm = config.RIGHT_AMR
         dual_arm_pose = np.concatenate([self.current_left_arm, self.current_right_arm])
         
         # Set arm pose
@@ -314,7 +349,8 @@ def run_offline_control(
     max_steps: int = 1000,
     display_status: bool = True,
     chunk_size: int = 1,
-    display_images: bool = False
+    display_images: bool = False,
+    start_index: int = 0
 ):
     """Main control loop for offline deployment with saved images"""
     
@@ -332,10 +368,11 @@ def run_offline_control(
     print(f"  - Frequency: {frequency} Hz")
     print(f"  - Max steps: {max_steps}")
     print(f"  - Chunk size: {chunk_size}")
+    print(f"  - Start index: {start_index}")
     print("="*60)
     
-    # Initialize image reader
-    image_reader = MultiCameraFolderReader(head_folder, wrist_folder)
+    # Initialize image reader with start index
+    image_reader = MultiCameraFolderReader(head_folder, wrist_folder, start_index)
     image_reader.start()
     
     if image_reader.total_images == 0:
@@ -352,6 +389,7 @@ def run_offline_control(
     
     # Main control loop
     print(f"\n[INFO] Starting control loop...")
+    print(f"[INFO] Processing images from index {start_index} to {image_reader.total_images-1}")
     print("Press Ctrl+C to stop\n")
     
     if display_images:
@@ -372,6 +410,9 @@ def run_offline_control(
                 print(f"[INFO] No more images available")
                 break
             
+            # Store current index before processing
+            current_image_index = image_reader.current_index
+            
             # Build image list in correct order [wrist, head]
             images_list = []
             if 'wrist' in frames:
@@ -386,12 +427,17 @@ def run_offline_control(
             
             if not images_list:
                 print(f"[WARN] No valid images at step {step}")
+                image_reader.skip_frames(1)  # Skip this frame
                 continue
             
             # Display images if requested
             if display_images:
                 for camera_type, image in frames.items():
-                    cv2.imshow(f"{camera_type} Camera", cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+                    # Add text overlay showing current index
+                    display_img = image.copy()
+                    cv2.putText(display_img, f"Index: {current_image_index}", 
+                              (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                    cv2.imshow(f"{camera_type} Camera", cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR))
                 cv2.waitKey(1)
             
             # Get action chunk from model
@@ -401,12 +447,15 @@ def run_offline_control(
                 inference_time = time.time() - inference_start
                 total_inference_count += 1
                 
+                chunk_length = len(action_chunk)
+                
                 if display_status:
                     cameras_used = list(frames.keys())
-                    print(f"\n[Inference {total_inference_count}] Frame: {image_reader.current_index-1:04d}")
+                    print(f"\n[Inference {total_inference_count}] Image index: {current_image_index:04d}")
                     print(f"Cameras: {', '.join(cameras_used)} ({'wrist+head' if len(cameras_used) == 2 else 'head only'})")
                     print(f"Inference time: {inference_time:.3f}s")
-                    print(f"Received action chunk with {len(action_chunk)} actions")
+                    print(f"Received action chunk with {chunk_length} actions")
+                    print(f"Next image will be index: {current_image_index + chunk_length}")
                 
                 # Execute each action in the chunk
                 for chunk_idx, action in enumerate(action_chunk):
@@ -416,7 +465,8 @@ def run_offline_control(
                     action_start = time.time()
                     
                     if display_status:
-                        print(f"\nStep {step + 1}/{max_steps} (Chunk action {chunk_idx + 1}/{len(action_chunk)})")
+                        print(f"\nStep {step + 1}/{max_steps} (Chunk action {chunk_idx + 1}/{chunk_length})")
+                        print(f"Corresponds to image index: {current_image_index + chunk_idx}")
                         print(f"Action:")
                         print(f"  - Left arm deltas: {np.array(action[:7]).round(3)}")
                         print(f"  - Right arm deltas: {np.array(action[7:14]).round(3)}")
@@ -446,6 +496,11 @@ def run_offline_control(
                     
                     step += 1
                 
+                # Skip frames based on chunk size
+                # We already read one frame, so skip chunk_length frames to get to the next one
+                image_reader.skip_frames(chunk_length)
+                print(f"[INFO] Skipped to image index: {image_reader.current_index}")
+                
             except Exception as e:
                 print(f"[ERROR] Failed to get/execute action chunk: {e}")
                 continue
@@ -467,7 +522,9 @@ def run_offline_control(
     print("[INFO] Control finished")
     print(f"[INFO] Total steps: {step}")
     print(f"[INFO] Total inferences: {total_inference_count}")
-    print(f"[INFO] Images processed: {image_reader.frame_count}/{image_reader.total_images}")
+    print(f"[INFO] Images processed: {image_reader.frame_count}")
+    print(f"[INFO] Started from index: {start_index}")
+    print(f"[INFO] Ended at index: {image_reader.current_index}")
 
 
 def main():
@@ -485,6 +542,9 @@ def main():
     # Get chunk size from config if available
     chunk_size = getattr(config, 'CHUNK_SIZE', 1)
     print(f"  - Chunk size: {chunk_size}")
+    
+    # Get start index from config if available
+    start_index = getattr(config, 'START_INDEX', 0)
     
     # Get head folder path
     head_folder = getattr(config, 'HEAD_FOLDER', None)
@@ -515,7 +575,17 @@ def main():
     # Display images option
     display_images = getattr(config, 'DISPLAY_IMAGES', False)
     print(f"  - Display images: {display_images}")
+    print(f"  - Start index: {start_index}")
     print("="*60)
+    
+    # Ask for custom start index
+    custom_start = input(f"\nEnter custom start index (current: {start_index}, press Enter to keep): ").strip()
+    if custom_start:
+        try:
+            start_index = int(custom_start)
+            print(f"[INFO] Using custom start index: {start_index}")
+        except ValueError:
+            print(f"[WARN] Invalid input, using config start index: {start_index}")
     
     # Ask for user confirmation
     user_input = input("\nPress 's' to start deployment, 'r' to reset robot, or 'q' to quit: ")
@@ -544,7 +614,8 @@ def main():
         max_steps=config.MAX_STEPS,
         display_status=config.DISPLAY_STATUS,
         chunk_size=chunk_size,
-        display_images=display_images
+        display_images=display_images,
+        start_index=start_index
     )
 
 

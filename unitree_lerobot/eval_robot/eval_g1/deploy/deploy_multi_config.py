@@ -1,6 +1,6 @@
 # Server configuration
 SERVER_URL = "https://ca179e8e1acc.ngrok-free.app/act"
-TASK_INSTRUCTION = "close plate"
+TASK_INSTRUCTION = "clean plate"
 
 # Control parameters
 CONTROL_FREQUENCY = 10.0  # Hz

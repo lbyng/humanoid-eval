@@ -139,17 +139,10 @@ def load_converted_data(json_file_path: str) -> dict:
 
 
 def detect_data_format(data: List[dict]) -> str:
-    """Detect whether data uses single camera or multi-camera format"""
     if not data:
         raise ValueError("Empty data")
-    
-    first_item = data[0]
-    if 'image' in first_item:
-        return 'single'
-    elif 'images' in first_item:
-        return 'multi'
-    else:
-        raise ValueError("Unknown data format: missing 'image' or 'images' field")
+    return 'multi'
+
 
 
 def group_episodes(data: List[dict], data_format: str) -> Dict[str, List[dict]]:
@@ -161,8 +154,8 @@ def group_episodes(data: List[dict], data_format: str) -> Dict[str, List[dict]]:
             image_path = item['image']
             episode_id = image_path.split('_')[0]
         else:  # multi
-            if item['images']:
-                first_image = item['images'][0]
+            if item['image']:
+                first_image = item['image'][0]
                 parts = first_image.split('/')
                 if len(parts) >= 2:
                     episode_id = parts[1]
@@ -183,7 +176,7 @@ def group_episodes(data: List[dict], data_format: str) -> Dict[str, List[dict]]:
             episodes[episode_id].sort(key=lambda x: x['image'].split('/')[-1])
         else:  # multi
             # Sort by frame number from first image path
-            episodes[episode_id].sort(key=lambda x: x['images'][0].split('/')[-1] if x['images'] else '9999')
+            episodes[episode_id].sort(key=lambda x: x['image'][0].split('/')[-1] if x['image'] else '9999')
     
     return episodes
 
@@ -196,13 +189,13 @@ def display_episode_info(episode_data: List[dict], data_format: str, episode_id:
     
     if data_format == 'multi':
         # Check camera configuration
-        if episode_data[0]['images']:
-            num_cameras = len(episode_data[0]['images'])
+        if episode_data[0]['image']:
+            num_cameras = len(episode_data[0]['image'])
             print(f"Cameras: {num_cameras}")
             
             # Identify camera types from paths
             camera_types = []
-            for img_path in episode_data[0]['images']:
+            for img_path in episode_data[0]['image']:
                 camera_type = img_path.split('/')[0]  # Extract camera type from path
                 camera_types.append(camera_type)
             print(f"Camera types: {', '.join(camera_types)}")
@@ -245,8 +238,8 @@ def replay_episode(
                 continue
             
             # Display progress with camera info
-            if data_format == 'multi' and item['images']:
-                camera_info = f" (cameras: {len(item['images'])})"
+            if data_format == 'multi' and item['image']:
+                camera_info = f" (cameras: {len(item['image'])})"
             else:
                 camera_info = ""
             
@@ -310,8 +303,8 @@ def main():
         task_name = episode[0]['task']
         
         # Get camera info for display
-        if data_format == 'multi' and episode[0]['images']:
-            camera_count = len(episode[0]['images'])
+        if data_format == 'multi' and episode[0]['image']:
+            camera_count = len(episode[0]['image'])
             camera_info = f" ({camera_count} cameras)"
         else:
             camera_info = " (1 camera)"
